@@ -1,0 +1,507 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="/core/fonts/fonts.css">
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}</style>
+</head><body><canvas id="c" width="1920" height="1080"></canvas>
+<script>
+/* 参考页面：一条「用 AI 写汉堡广告」口播成片的完整画面代码 — Caption News skeleton + Game Show Flat rounds.
+   render(t) is a pure function of t; every state is recomputed from t.
+   换成自己的片子：改 ACCOUNT / BRAND，按自己的 captions.json 改 M 里用到的关键词名和各场景内容。 */
+const ACCOUNT = 'AI 广告课', BRAND = '品牌名';
+const W = 1920, H = 1080, FPS = 30;
+const C = document.getElementById('c'), X = C.getContext('2d');
+const CJK = '"Noto Sans CJK SC","Noto Sans SC",sans-serif';
+const INK = '#0E0E0C', IVORY = '#F7F5EF', HONEY = '#FFC21A', RED = '#FF4A3D', GREY = '#8D8B83';
+const CANDY = { yellow: '#FFD23F', orange: '#FF8A3D', red: '#FF5A4E', pink: '#FF6FB5', green: '#3DDC84', sky: '#45C4FF', blue: '#4F6BFF', lime: '#B6F03B' };
+let TL, M, OFF, TALK, ADLEN, SHOW0, DUR;
+
+// ---------- helpers
+const clamp = (x, a = 0, b = 1) => x < a ? a : x > b ? b : x;
+const seg = (t, a, d) => clamp((t - a) / d);
+const eo = x => 1 - Math.pow(1 - clamp(x), 3);
+const eio = x => (x = clamp(x), x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const back = (x, s = 1.6) => (x = clamp(x) - 1, 1 + (s + 1) * x * x * x + s * x * x);
+function hash(n) { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
+
+const cache = new Map();
+function img(src) {
+  if (cache.has(src)) return cache.get(src);
+  const im = new Image(); im.src = src;
+  const p = im.decode().then(() => im, () => null);
+  cache.set(src, p);
+  if (cache.size > 260) cache.delete(cache.keys().next().value);
+  return p;
+}
+const pf = i => `person/${String(Math.max(0, Math.min(2055, i))).padStart(5, '0')}.webp`;
+const af = s => `ad/${String(Math.max(1, Math.min(901, Math.floor(clamp(s, 0, 30.04) * 30) + 1))).padStart(4, '0')}.jpg`;
+
+function font(px, w = 900, fam = CJK) { X.font = `${w} ${px}px ${fam}`; }
+function outlined(txt, x, y, px, fill, stroke = INK, sw = 0.14, w = 900, fam = CJK, align = 'left') {
+  font(px, w, fam); X.textAlign = align; X.textBaseline = 'alphabetic';
+  X.lineJoin = 'round'; X.lineWidth = px * sw * 2; X.strokeStyle = stroke; X.strokeText(txt, x, y);
+  X.fillStyle = fill; X.fillText(txt, x, y);
+}
+function tw(txt, px, w = 900, fam = CJK) { font(px, w, fam); return X.measureText(txt).width; }
+function rr(x, y, w, h, r) { X.beginPath(); X.roundRect(x, y, w, h, r); }
+function withT(cx, cy, s, rot, fn) { X.save(); X.translate(cx, cy); X.rotate(rot || 0); X.scale(s, s); fn(); X.restore(); }
+
+/* game-show sticker: flat fill, ink outline, hard offset shadow */
+function sticker(cx, cy, txt, px, fill, ink = INK, s = 1, rot = 0, padx = 0.55, pady = 0.32) {
+  const w = tw(txt, px) + px * padx * 2, h = px * (1 + pady * 2);
+  withT(cx, cy, s, rot, () => {
+    rr(-w / 2 + 12, -h / 2 + 12, w, h, h * 0.32); X.fillStyle = INK; X.fill();
+    rr(-w / 2, -h / 2, w, h, h * 0.32); X.fillStyle = fill; X.fill(); X.lineWidth = 7; X.strokeStyle = INK; X.stroke();
+    font(px); X.textAlign = 'center'; X.textBaseline = 'middle'; X.fillStyle = ink; X.fillText(txt, 0, px * 0.04);
+  });
+  return w;
+}
+function popS(t, t0) { return t < t0 ? 0 : 0.35 + 0.65 * back(seg(t, t0, 0.22), 2.2); }
+
+/* frame punch: the whole picture breathes on hits */
+let PUNCH = 0;
+function punchAt(t, times, amt = 0.03) { let p = 0; for (const a of times) if (t >= a && t < a + 0.2) p += amt * (1 - (t - a) / 0.2); return p; }
+
+// ---------- presenter
+const FACE = [353, 512];
+function drawRoom(plate, u, dark = 0.42) {
+  // the user's own room, blurred and pulled down so the presenter carries the frame
+  X.save(); X.filter = 'blur(18px) brightness(' + dark + ') saturate(0.8)';
+  const s = 1920 / 720; X.drawImage(plate, 0, 300, 720, 405, -40, -40, 2000, 1160); X.restore();
+  const g = X.createRadialGradient(1100, 420, 60, 1100, 420, 900);
+  g.addColorStop(0, 'rgba(255,150,60,0.20)'); g.addColorStop(1, 'rgba(0,0,0,0)'); X.fillStyle = g; X.fillRect(0, 0, W, H);
+  const v = X.createRadialGradient(W / 2, H / 2, 300, W / 2, H / 2, 1250);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.65)'); X.fillStyle = v; X.fillRect(0, 0, W, H);
+}
+function drawPerson(p, fx, fy, s) {
+  if (!p) return;
+  X.save();
+  X.shadowColor = 'rgba(255,140,50,0.55)'; X.shadowBlur = 40;               // warm rim that lifts him off the dark room
+  X.drawImage(p, fx - FACE[0] * s, fy - FACE[1] * s, 720 * s, 1280 * s);
+  X.restore();
+}
+function drawPip(p, plate, cx, cy, r, k) {
+  if (!p || k <= 0) return;
+  withT(cx, cy, 0.4 + 0.6 * back(k, 2), 0, () => {
+    X.beginPath(); X.arc(10, 10, r + 8, 0, 7); X.fillStyle = INK; X.fill();
+    X.save(); X.beginPath(); X.arc(0, 0, r, 0, 7); X.clip();
+    X.filter = 'blur(10px) brightness(0.55)'; X.drawImage(plate, 60, 230, 600, 600, -r, -r, 2 * r, 2 * r); X.filter = 'none';
+    const s = (2 * r) / 560; X.drawImage(p, -FACE[0] * s, -FACE[1] * s + 0.04 * r * 2, 720 * s, 1280 * s);
+    X.restore();
+    X.beginPath(); X.arc(0, 0, r, 0, 7); X.lineWidth = 8; X.strokeStyle = HONEY; X.stroke();
+    X.fillStyle = RED; X.beginPath(); X.arc(-r * 0.62, -r * 0.78, 11, 0, 7); X.fill();
+  });
+}
+
+// ---------- footage (the ad), graded as one with the rest
+function footage(im, push = 0, sat = 0.95) {
+  if (!im) return;
+  const s = 1 + 0.03 * push, cw = 1120 / s, ch = 630 / s;
+  X.save(); X.filter = `contrast(1.07) saturate(${sat}) brightness(0.98)`;
+  X.drawImage(im, (1470 - cw) / 2, (630 - ch) / 2, cw, ch, 0, 0, W, H); X.restore();
+}
+function gradients() {
+  let g = X.createLinearGradient(0, 560, 0, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.84)');
+  X.fillStyle = g; X.fillRect(0, 560, W, H - 560);
+  g = X.createLinearGradient(0, 0, 0, 200); g.addColorStop(0, 'rgba(0,0,0,0.55)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  X.fillStyle = g; X.fillRect(0, 0, W, 200);
+}
+function flash(t, t0, d = 0.07) { if (t >= t0 && t < t0 + d) { X.fillStyle = `rgba(255,255,255,${0.85 * (1 - (t - t0) / d)})`; X.fillRect(0, 0, W, H); } }
+
+// ---------- channel bug, source tag, credit
+function bug(t, label = '构思 → 成片') {
+  X.fillStyle = HONEY; X.fillRect(96, 52, tw(ACCOUNT, 30) + 36, 46);
+  font(30); X.fillStyle = INK; X.textAlign = 'left'; X.textBaseline = 'middle'; X.fillText(ACCOUNT, 114, 76);
+  const x = 96 + tw(ACCOUNT, 30) + 48; font(24, 700); X.fillStyle = IVORY; X.fillText(label, x, 76);
+}
+function tag(t, t0, txt, y = 108) {
+  if (t < t0) return; const k = eo(seg(t, t0, 0.2)); const w = tw(txt, 22, 700) + 110;
+  X.save(); X.globalAlpha = k; X.translate(-40 * (1 - k), 0);
+  X.fillStyle = IVORY; X.fillRect(96, y, 70, 36); font(22, 800); X.fillStyle = INK; X.textBaseline = 'middle'; X.fillText('来源', 108, y + 18);
+  X.fillStyle = 'rgba(14,14,12,0.85)'; X.fillRect(166, y, w - 70, 36); font(22, 700); X.fillStyle = IVORY; X.fillText(txt, 180, y + 18); X.restore();
+}
+function credit(txt) {
+  font(19, 700); const w = X.measureText(txt).width + 28;
+  X.fillStyle = 'rgba(0,0,0,0.5)'; rr(W - 64 - w, 58, w, 34, 8); X.fill();
+  X.fillStyle = IVORY; X.textAlign = 'left'; X.textBaseline = 'middle'; X.fillText(txt, W - 50 - w, 75);
+}
+
+// ---------- captions: chunks slam one after another, one keyword on a honey block
+function caption(u, maxRight = 1560) {
+  const c = TL.caps.find(c => u >= c.t0 - 0.04 && u < c.t1); if (!c) return [];
+  let px = 88; const full = c.chunks.join('');
+  const gap = 22; let total = c.chunks.reduce((a, s) => a + tw(s, px) + gap, -gap);
+  if (120 + total > maxRight) { px = Math.floor(px * (maxRight - 120) / total); total = maxRight - 120; }
+  let x = 120; const y = 948;
+  for (let i = 0; i < c.chunks.length; i++) {
+    const s = c.chunks[i], t0 = c.starts[i] - 0.04; const w = tw(s, px);
+    if (u >= t0) {
+      const k = seg(u, t0, 0.13), sc = 1.3 - 0.3 * back(k, 1.6);
+      withT(x + w / 2, y - px * 0.35, sc, 0, () => {
+        X.globalAlpha = clamp(seg(u, t0, 0.04));
+        const ki = c.kw ? s.indexOf(c.kw) : -1;
+        if (ki >= 0) {
+          const pre = s.slice(0, ki), kw = c.kw, x0 = -w / 2 + tw(pre, px), kwW = tw(kw, px);
+          const wipe = eo(seg(u, t0 + 0.05, 0.12));
+          X.fillStyle = HONEY; X.fillRect(x0 - 10, -px * 0.62, (kwW + 20) * wipe, px * 1.22);
+          font(px); X.textAlign = 'left'; X.textBaseline = 'middle';
+          X.shadowColor = 'rgba(0,0,0,0.55)'; X.shadowBlur = 20;
+          X.fillStyle = IVORY; X.fillText(pre, -w / 2, 0); X.fillText(s.slice(ki + kw.length), x0 + kwW, 0);
+          X.shadowBlur = 0; X.fillStyle = wipe > 0.5 ? INK : IVORY; X.fillText(kw, x0, 0);
+        } else {
+          font(px); X.textAlign = 'left'; X.textBaseline = 'middle'; X.shadowColor = 'rgba(0,0,0,0.55)'; X.shadowBlur = 20;
+          X.fillStyle = IVORY; X.fillText(s, -w / 2, 0);
+        }
+        X.globalAlpha = 1; X.shadowBlur = 0;
+      });
+    }
+    x += w + gap;
+  }
+  return [{ id: 'cap' + c.t0, text: full, x0: 120, y0: y - px, x1: 120 + total, y1: y + 20 }];
+}
+
+// ---------- game-show set: candy stripes + round card
+function stripes(t, hue, hue2) {
+  X.fillStyle = hue; X.fillRect(0, 0, W, H);
+  X.save(); X.translate(W / 2, H / 2); X.rotate(-0.5); X.fillStyle = hue2;
+  const off = (t * 60) % 160;
+  for (let x = -1600 + off; x < 1600; x += 160) X.fillRect(x, -1400, 70, 2800);
+  X.restore();
+}
+function burst(cx, cy, k, col = IVORY) {
+  if (k <= 0 || k >= 1) return; X.save(); X.translate(cx, cy); X.strokeStyle = col; X.lineWidth = 10 * (1 - k); X.lineCap = 'round';
+  for (let i = 0; i < 12; i++) { const a = i / 12 * 6.283; const r0 = 120 + 260 * eo(k), r1 = r0 + 70 * (1 - k);
+    X.beginPath(); X.moveTo(Math.cos(a) * r0, Math.sin(a) * r0); X.lineTo(Math.cos(a) * r1, Math.sin(a) * r1); X.stroke(); }
+  X.restore();
+}
+function roundCard(t, t0, n, name, hue, hue2) {
+  const u = t - t0; stripes(t, hue, hue2);
+  X.fillStyle = 'rgba(0,0,0,0.18)'; X.fillRect(0, 760, W, 320); X.fillStyle = INK; X.fillRect(0, 756, W, 8);
+  const k = back(seg(u, 0.0, 0.25), 2.2);
+  withT(W / 2, 420 - 600 * (1 - eo(seg(u, 0, 0.18))), 1, -0.035, () => {
+    rr(-420 + 14, -190 + 14, 840, 380, 46); X.fillStyle = INK; X.fill();
+    rr(-420, -190, 840, 380, 46); X.fillStyle = '#FFF6E6'; X.fill(); X.lineWidth = 9; X.strokeStyle = INK; X.stroke();
+    outlined(n, 0, -40, 92, hue, INK, 0.12, 400, '"Lilita One"', 'center');
+    outlined(name, 0, 120, 120, INK, '#FFF6E6', 0.0, 900, CJK, 'center');
+  });
+  burst(W / 2, 420, seg(u, 0.12, 0.45));
+}
+function judge(t, t0, word, col = CANDY.pink, cx = 960, cy = 230, rot = -0.08) {
+  if (t < t0 || t > t0 + 1.6) return;
+  const k = back(seg(t, t0, 0.2), 2.6), out = seg(t, t0 + 1.35, 0.25);
+  X.save(); X.globalAlpha = 1 - out; withT(cx, cy, 0.3 + 0.7 * k, rot, () => outlined(word, 0, 40, 120, col, INK, 0.13, 900, CJK, 'center')); X.restore();
+  burst(cx, cy, seg(t, t0 + 0.05, 0.4), col);
+}
+
+// ---------- scenes
+function layout(u) {
+  // presenter framing per beat: [face x, face y, scale]; hard cuts between sizes hide the removed breaths
+  const L = { mid: [960, 470, 0.84], close: [960, 520, 1.12], right: [1400, 470, 0.84] };
+  const keys = [[0, 'close'], [M.hi - 0.05, 'right'], [M.q - 0.05, 'close'], [M.gou + 0.3, 'right'],
+                [M.prompt - 0.05, 'close'], [M.ps + 0.4, 'right'], [M.gen + 0.9, 'right'], [M.done - 0.05, 'close'], [M.whole - 0.05, 'mid']];
+  let cur = keys[0]; for (const k of keys) if (u >= k[0]) cur = k;
+  return { f: L[cur[1]], t0: cur[0] };
+}
+const ROUNDS = () => [
+  [M.first - 0.1, 'ROUND 1', '构思', CANDY.orange, '#FFA45E'],
+  [M.sb - 0.25, 'ROUND 2', '写分镜', CANDY.sky, '#7AD6FF'],
+  [M.gen - 0.1, 'ROUND 3', '生成', CANDY.green, '#7BE8A8'],
+  [M.cut - 0.12, 'ROUND 4', '剪辑', CANDY.pink, '#FF9ACB'],
+  [M.brand - 0.1, 'FINAL', '品牌落版', CANDY.red, '#FF8478']];
+const RCARD = 0.8;
+
+async function talkScene(t, u) {
+  const i = Math.round(u * FPS);
+  const [p, plate] = await Promise.all([img(pf(i)), img('room_plate.jpg')]);
+  // which kind of shot are we in?
+  const R = ROUNDS(); const rc = R.find(r => u >= r[0] && u < r[0] + RCARD);
+  const full = (u >= M.rou - 0.08 && u < M.prompt - 0.1) ? 'micro' : (u >= M.sb - 0.25 + RCARD && u < M.gen - 0.1) ? 'board'
+             : (u >= M.cut - 0.12 + RCARD && u < M.brand - 0.1) ? 'timeline' : (u >= M.brand - 0.1 + RCARD && u < M.done - 0.1) ? 'brand' : null;
+  const texts = [];
+  if (rc) { roundCard(u, rc[0], rc[1], rc[2], rc[3], rc[4]); flash(u, rc[0], 0.06); return texts; }
+  if (full) {
+    if (full === 'micro') await micro(u);
+    if (full === 'board') await board(u);
+    if (full === 'timeline') await timeline(u);
+    if (full === 'brand') await brandShot(u);
+    gradients(); bug(u, { micro: '微观镜头', board: '分镜表', timeline: '剪辑轨道', brand: '品牌落版' }[full]);
+    const startFull = { micro: M.rou - 0.08, board: M.sb - 0.25 + RCARD, timeline: M.cut - 0.12 + RCARD, brand: M.brand - 0.1 + RCARD }[full];
+    drawPip(p, plate, 1716, 862, 132, seg(u, startFull, 0.3));
+    texts.push(...caption(u, 1500));
+    return texts;
+  }
+  // presenter shot
+  const { f, t0 } = layout(u);
+  drawRoom(plate, u);
+  const breathe = 1 + 0.01 * Math.sin(u * 0.9);
+  drawPerson(p, f[0], f[1] + 4 * Math.sin(u * 0.7), f[2] * breathe * (1 + 0.035 * eo(1 - seg(u, t0, 0.25)) * 0));
+  flash(u, t0, 0.05);
+  // content beside the presenter
+  if (u >= M.hi - 0.05 && u < M.q - 0.05) intro(u);
+  if (u >= M.gou + 0.3 && u < M.rou - 0.08) ingredients(u);
+  if (u >= M.ps + 0.4 && u < M.sb - 0.25) promptCard(u);
+  if (u >= M.gen + 0.9 && u < M.cut - 0.12) steps(u);
+  if (u >= M.whole - 0.05) sticker(960, 190, '✓ 一条完整的 AI 广告', 64, HONEY, INK, popS(u, M.whole - 0.05), -0.03);
+  gradients(); bug(u);
+  texts.push(...caption(u, f[0] > 1200 ? 1150 : 1560));
+  return texts;
+}
+
+function intro(u) {
+  const t0 = M.hi;
+  if (u >= M.burger - 0.05) {
+    // burger photo card with hard shadow, tilted like a sticker
+    const k = popS(u, M.burger - 0.05);
+    withT(560, 470, k, -0.04, () => {
+      X.fillStyle = INK; rr(-330 + 16, -200 + 16, 660, 400, 30); X.fill();
+      X.fillStyle = '#FFF6E6'; rr(-330, -200, 660, 400, 30); X.fill(); X.lineWidth = 8; X.strokeStyle = INK; X.stroke();
+      if (IM.hero) { X.save(); rr(-306, -176, 612, 344, 18); X.clip(); X.drawImage(IM.hero, 175, 0, 1120, 630, -306, -176, 612, 344); X.restore(); }
+    });
+    sticker(400, 720, '今日题材：汉堡', 52, RED, IVORY, popS(u, M.burger + 0.12), 0.05);
+  } else {
+    withT(520, 360, popS(u, t0 + 0.05), -0.03, () => outlined('用 AI 写', 0, 0, 120, IVORY, INK, 0.12, 900, CJK, 'center'));
+    withT(520, 520, popS(u, t0 + 0.3), -0.03, () => outlined('一条视频广告', 0, 0, 120, HONEY, INK, 0.12, 900, CJK, 'center'));
+  }
+}
+function ingredients(u) {
+  outlined('先构思场景', 120, 250, 104, IVORY, INK, 0.12);
+  const items = [['牛肉', M.beef, CANDY.red], ['芝士', M.cheese, CANDY.yellow], ['香菜', M.cilantro, CANDY.green]];
+  items.forEach(([n, t0, col], i) => {
+    if (u < t0 - 0.06) return;
+    const drop = 1 - eo(seg(u, t0 - 0.06, 0.16));                 // drops from the sky, lands on its word
+    const sq = u > t0 + 0.1 ? 1 + 0.08 * Math.exp(-(u - t0 - 0.1) * 9) * Math.sin((u - t0 - 0.1) * 30) : 1;
+    withT(230 + i * 270, 470 - 500 * drop, 1, (i - 1) * 0.06, () => {
+      X.save(); X.scale(1 / sq, sq);
+      X.beginPath(); X.arc(12, 12, 115, 0, 7); X.fillStyle = INK; X.fill();
+      X.beginPath(); X.arc(0, 0, 115, 0, 7); X.fillStyle = col; X.fill(); X.lineWidth = 8; X.strokeStyle = INK; X.stroke();
+      outlined(n, 0, 26, 72, IVORY, INK, 0.13, 900, CJK, 'center'); X.restore();
+    });
+  });
+  if (u >= M.imag - 0.05) sticker(450, 700, '＋ 想象力', 64, HONEY, INK, popS(u, M.imag - 0.05), -0.04);
+}
+function promptCard(u) {
+  outlined('提示词 ✓', 120, 260, 100, IVORY, INK, 0.12);
+  const lines = [['产品外观 · 色彩 · 光影', CANDY.sky], ['每个镜头：动作 + 运镜', CANDY.yellow]];
+  lines.forEach(([s, c], i) => sticker(560, 430 + i * 150, s, 52, c, INK, popS(u, M.ps + 0.55 + i * 0.3), (i ? 1 : -1) * 0.025));
+}
+function steps(u) {
+  const S = [['上传参考图', M.ref, CANDY.sky, 'hero'], ['生成分镜图', M.gsb, CANDY.yellow, 'sb'], ['检查食材', M.chk, CANDY.green, 'cheese'], ['生成视频', M.vid, CANDY.pink, 'bite']];
+  S.forEach(([n, t0, col, im], i) => {
+    if (u < t0 - 0.08) return;
+    const cx = 330 + (i % 2) * 460, cy = 330 + Math.floor(i / 2) * 320, k = popS(u, t0 - 0.08);
+    const live = S.filter(s => u >= s[1] - 0.08).length - 1 === i;
+    withT(cx, cy, k, (i % 2 ? 1 : -1) * 0.03, () => {
+      X.fillStyle = INK; rr(-200 + 14, -140 + 14, 400, 280, 30); X.fill();
+      X.fillStyle = live ? col : '#FFF6E6'; rr(-200, -140, 400, 280, 30); X.fill(); X.lineWidth = 8; X.strokeStyle = INK; X.stroke();
+      const pic = IM[im]; if (pic) { X.save(); rr(-170, -112, 340, 160, 16); X.clip();
+        if (im === 'sb') X.drawImage(pic, 0, 0, 3200, 2000, -170, -112, 340, 212); else X.drawImage(pic, 175, 0, 1120, 630, -170, -112, 340, 191); X.restore();
+        X.lineWidth = 5; rr(-170, -112, 340, 160, 16); X.stroke(); }
+      outlined(String(i + 1).padStart(2, '0'), -150, 108, 56, IVORY, INK, 0.14, 400, '"Lilita One"');
+      outlined(n, -70, 106, 46, INK, '#FFF6E6', 0, 900, CJK);
+    });
+    if (n === '检查食材' && u >= t0 + 0.5) sticker(cx + 150, cy - 120, '✓', 54, CANDY.green, INK, popS(u, t0 + 0.5), 0.1);
+  });
+}
+
+// micro: the ad's macro shots cut on the half-beat grid, REC frame, verdict words
+async function micro(u) {
+  const t0 = M.rou - 0.08;
+  const shots = [[t0, 0.4], [t0 + 1.0, 3.6], [M.micro - 0.05, 5.7], [M.micro + 1.0, 7.4], [M.micro + 2.0, 8.4],
+                 [M.lens - 0.05, 1.2], [M.lens + 1.0, 9.8], [M.aud - 0.05, 11.4], [M.zhi + 1.5, 12.6]];
+  let k = 0; for (let j = 0; j < shots.length; j++) if (u >= shots[j][0]) k = j;
+  const [a, src] = shots[k], b = shots[k + 1] ? shots[k + 1][0] : M.prompt;
+  const fr = await img(af(src + (u - a) * 0.8));
+  footage(fr, seg(u, a, Math.max(0.5, b - a)));
+  flash(u, a, 0.05);
+  credit('画面 · ' + BRAND + ' AI 广告');
+  if (u >= M.micro - 0.05 && u < M.lens - 0.05) withT(960, 430, popS(u, M.micro - 0.05), -0.03, () => outlined('微观想象空间', 0, 0, 132, IVORY, INK, 0.12, 900, CJK, 'center'));
+  if (u >= M.lens - 0.05 && u < M.aud - 0.05) {
+    const m = 70 + 40 * (1 - eo(seg(u, M.lens - 0.05, 0.25))), L = 90;
+    X.strokeStyle = IVORY; X.lineWidth = 7;
+    for (const [x, y, sx, sy] of [[m, m + 90, 1, 1], [W - m, m + 90, -1, 1], [m, H - m - 160, 1, -1], [W - m, H - m - 160, -1, -1]]) {
+      X.beginPath(); X.moveTo(x + sx * L, y); X.lineTo(x, y); X.lineTo(x, y + sy * L); X.stroke(); }
+    if (Math.floor(u * 2) % 2 === 0) { X.fillStyle = RED; X.beginPath(); X.arc(W - m - 150, m + 130, 14, 0, 7); X.fill(); }
+    font(36, 400, '"Lilita One"'); X.fillStyle = IVORY; X.textAlign = 'left'; X.fillText('REC', W - m - 128, m + 143);
+    withT(960, 430, popS(u, M.lens - 0.05), 0.03, () => outlined('用镜头表达', 0, 0, 132, HONEY, INK, 0.12, 900, CJK, 'center'));
+  }
+  judge(u, M.zhi - 0.05, '更直观!', CANDY.yellow, 520, 330, -0.1);
+  judge(u, M.tie - 0.05, '更贴切!', CANDY.pink, 1300, 360, 0.08);
+}
+
+// board: the storyboard sheet as the document on screen; highlighter sweeps on the words that name each shot
+function panel(i) { const pw = 480, ch = 206, r = Math.floor(i / 3), c = i % 3; return [48 + c * (pw + 32), 116 + r * (ch + 86), pw, ch + 74]; }
+async function board(u) {
+  const sb = IM.sb, t0 = M.sb - 0.25 + RCARD;
+  X.fillStyle = '#151512'; X.fillRect(0, 0, W, H);
+  X.strokeStyle = 'rgba(255,255,255,0.045)'; X.lineWidth = 2; for (let y = 54; y < H; y += 54) { X.beginPath(); X.moveTo(0, y); X.lineTo(W, y); X.stroke(); }
+  X.strokeStyle = 'rgba(255,74,61,0.5)'; [78, 86].forEach(x => { X.beginPath(); X.moveTo(x, 0); X.lineTo(x, H); X.stroke(); });
+  // camera over the sheet (sheet px @1x 1600x1000): wide → highlighted panels → each shot
+  const wide = [800, 520, 1700];
+  const order = [1, 4, 8, 6];
+  const cams = [[t0, ...wide]];
+  order.forEach((p, k) => { const [x, y, w, h] = panel(p); cams.push([M.each + k * 0.95, x + w / 2, y + h / 2 - 10, 820]); });
+  cams.push([M.gen - 0.75, ...wide]);
+  let j = 0; for (let q = 0; q < cams.length; q++) if (u >= cams[q][0]) j = q;
+  const A = cams[Math.max(0, j - 1)], B = cams[j], kk = eio(seg(u, B[0], 0.45));
+  const cx = A[1] + (B[1] - A[1]) * kk, cy = A[2] + (B[2] - A[2]) * kk, zw = (A[3] + (B[3] - A[3]) * kk) * (1 - 0.02 * seg(u, B[0], 3));
+  const s = W / zw, ox = cx - zw / 2, oy = cy - zw * 9 / 32;
+  const tilt = -0.012;
+  X.save(); X.translate(W / 2, H / 2); X.rotate(tilt); X.translate(-W / 2, -H / 2);
+  X.shadowColor = 'rgba(0,0,0,0.6)'; X.shadowBlur = 50;
+  X.drawImage(sb, 0, 0, 3200, 2000, -ox * s, -oy * s, 1600 * s, 1000 * s); X.shadowBlur = 0;
+  const to = (x, y) => [(x - ox) * s, (y - oy) * s];
+  // highlighter on 外观 / 色彩 / 光影
+  [[M.look, 1, '外观', HONEY], [M.color, 4, '色彩', RED], [M.light, 8, '光影', CANDY.sky]].forEach(([tm, p, lab, col]) => {
+    if (u < tm - 0.05 || u >= M.each - 0.1) return;
+    const [x, y, w, h] = panel(p), [x0, y0] = to(x - 6, y + 206 + 4), [x1, y1] = to(x + w + 6, y + h);
+    const k = eo(seg(u, tm - 0.05, 0.35));
+    X.save(); X.globalCompositeOperation = 'multiply'; X.fillStyle = col; X.fillRect(x0, y0, (x1 - x0) * k, y1 - y0); X.restore();
+    const [a0, b0] = to(x - 8, y - 8), [a1, b1] = to(x + w + 8, y + 206 + 8);
+    X.lineWidth = 8; X.strokeStyle = col; X.strokeRect(a0, b0, (a1 - a0), (b1 - b0) * k);
+  });
+  X.restore();
+  [[M.look, '外观', HONEY, 330], [M.color, '色彩', RED, 960], [M.light, '光影', CANDY.sky, 1590]].forEach(([tm, lab, col, x]) => {
+    if (u >= tm - 0.05 && u < M.prefix - 0.1) sticker(x, 200, lab, 64, col, INK, popS(u, tm - 0.05), (x - 960) / 9000);
+  });
+  if (u >= M.prefix - 0.1 && u < M.each - 0.1) {
+    const k = eo(seg(u, M.prefix - 0.1, 0.25));
+    X.save(); X.globalAlpha = k; X.fillStyle = HONEY; X.fillRect(120, 700 - 20 * (1 - k), 1680, 96);
+    font(46); X.fillStyle = INK; X.textBaseline = 'middle'; X.textAlign = 'left';
+    X.fillText('固定前缀｜' + BRAND + ' · 芝麻面包 · 红色包装纸 · 暖棕背景 · 侧逆光', 150, 748 - 20 * (1 - k)); X.restore();
+  }
+  if (u >= M.each - 0.1 && u < M.gen - 0.75) {
+    const k = Math.min(3, Math.floor((u - M.each) / 0.95)), p = order[Math.max(0, k)];
+    const labs = { 1: '中景 · 固定', 4: '特写拉中景', 8: '落版 · 扫光', 6: '近景 · 停半拍' };
+    sticker(960, 190, `镜头 ${String(p + 1).padStart(2, '0')}｜${labs[p]}`, 58, HONEY, INK, popS(u, M.each + Math.max(0, k) * 0.95), -0.02);
+  }
+  tag(u, t0 + 0.2, BRAND + ' · 分镜表 · 第 1 页', 108);
+}
+
+// timeline: the edit as a board — four tracks, a playhead sweeping the 30 s cut, verdict words on each finding
+const SHOTS = [[0, 3.08], [3.08, 5.54], [5.54, 8.08], [8.08, 9.58], [9.58, 13.58], [13.58, 17.17], [17.17, 21.38], [21.38, 24.54], [24.54, 30.08]];
+async function timeline(u) {
+  const t0 = M.cut - 0.12 + RCARD, t1 = M.brand - 0.1;
+  const play = clamp((u - t0 - 0.2) / (t1 - t0 - 0.5)) * 30;
+  X.fillStyle = '#151512'; X.fillRect(0, 0, W, H);
+  X.strokeStyle = 'rgba(255,255,255,0.045)'; X.lineWidth = 2; for (let y = 54; y < H; y += 54) { X.beginPath(); X.moveTo(0, y); X.lineTo(W, y); X.stroke(); }
+  const mon = await img(af(play));
+  const mk = eo(seg(u, t0, 0.25));
+  X.save(); X.globalAlpha = mk;
+  X.fillStyle = INK; rr(692, 62, 576, 324, 14); X.fill();
+  if (mon) { X.save(); rr(680, 50, 576, 324, 14); X.clip(); X.drawImage(mon, 175, 0, 1120, 630, 680, 50, 576, 324); X.restore(); }
+  X.lineWidth = 6; X.strokeStyle = IVORY; rr(680, 50, 576, 324, 14); X.stroke();
+  outlined('剪辑轨道', 120, 230, 72, IVORY, INK, 0.1);
+  font(28, 400, '"Lilita One"'); X.fillStyle = GREY; X.textAlign = 'left'; X.fillText('EDIT TIMELINE · 30s', 124, 280);
+  font(44, 400, '"Lilita One"'); X.fillStyle = HONEY;
+  X.fillText(`00:${String(Math.floor(play)).padStart(2, '0')}:${String(Math.floor((play % 1) * 24)).padStart(2, '0')}`, 1290, 370);
+  X.restore();
+  const X0 = 300, X1 = 1820, Y0 = 452, RH = 90, px = s => X0 + (X1 - X0) * s / 30;
+  const names = [['V1 画面', CANDY.yellow], ['T1 字幕', CANDY.orange], ['A1 音效', CANDY.sky], ['A2 音乐', CANDY.green]];
+  names.forEach(([n, c], r) => {
+    const y = Y0 + r * RH, k = eo(seg(u, t0 + 0.05 + r * 0.06, 0.2));
+    X.save(); X.globalAlpha = k; X.fillStyle = '#23231f'; rr(X0, y, X1 - X0, 76, 12); X.fill();
+    X.fillStyle = c; X.fillRect(120, y + 18, 10, 40); font(32, 900); X.fillStyle = IVORY; X.textBaseline = 'middle'; X.fillText(n, 146, y + 38); X.restore();
+  });
+  for (let s = 0; s <= 30; s += 5) { font(22, 700); X.fillStyle = GREY; X.textAlign = 'center'; X.fillText(s + 's', px(s), Y0 - 22); }
+  SHOTS.forEach(([a, b], i) => {
+    const k = eo(seg(u, t0 + 0.15 + i * 0.04, 0.18)); if (k <= 0) return;
+    const x0 = px(a) + 3, x1 = px(b) - 3, th = IM['t' + i];
+    X.save(); X.globalAlpha = k; rr(x0, Y0 + 3, x1 - x0, 70, 8); X.clip(); if (th) X.drawImage(th, 0, 0, 320, 180, x0, Y0 - 12, Math.max(124, x1 - x0), 100); X.restore();
+    X.lineWidth = 3; X.strokeStyle = INK; rr(x0, Y0 + 3, x1 - x0, 70, 8); X.stroke();
+  });
+  const block = (a, b, row, lab, col) => { X.fillStyle = col; rr(px(a), Y0 + row * RH + 10, px(b) - px(a), 56, 10); X.fill();
+    font(24, 900); X.fillStyle = INK; X.textAlign = 'left'; X.textBaseline = 'middle'; X.fillText(lab, px(a) + 12, Y0 + row * RH + 38); };
+  if (u > t0 + 0.4) { block(24.6, 30, 1, BRAND + ' 品牌字', CANDY.orange); block(13.6, 17.2, 2, '纸张摩擦', CANDY.sky); block(17.4, 19.4, 2, '入口声', CANDY.sky); block(24.6, 26.2, 2, '扫光', CANDY.sky);
+    X.strokeStyle = CANDY.green; X.lineWidth = 4; const yb = Y0 + 3 * RH + 38;
+    for (let x = X0 + 6; x < X1 - 6; x += 7) { const a = 6 + 20 * Math.abs(Math.sin(x * 0.045)) * (0.55 + 0.45 * Math.sin(x * 0.011)); X.beginPath(); X.moveTo(x, yb - a); X.lineTo(x, yb + a); X.stroke(); } }
+  const bracket = (a, b, row, col, tm) => { if (u < tm - 0.05) return; const k = eo(seg(u, tm - 0.05, 0.22));
+    X.lineWidth = 8; X.strokeStyle = col; rr(px(a) - 6, Y0 + row * RH - 6, (px(b) - px(a) + 12) * k, 88, 14); X.stroke(); };
+  bracket(3.08, 13.58, 0, HONEY, M.fast); bracket(17.17, 21.38, 0, RED, M.pause); bracket(13.6, 19.4, 2, CANDY.sky, M.paper);
+  if (u >= M.rhythm - 0.05) { X.strokeStyle = 'rgba(255,194,26,0.35)'; X.lineWidth = 3; for (let b = 0; b <= 30; b += 0.5) { X.beginPath(); X.moveTo(px(b), Y0 - 6); X.lineTo(px(b), Y0 + 4 * RH); X.stroke(); } }
+  const x = px(play); X.fillStyle = RED; X.fillRect(x - 2, Y0 - 16, 4, 4 * RH + 10); X.beginPath(); X.moveTo(x - 14, Y0 - 30); X.lineTo(x + 14, Y0 - 30); X.lineTo(x, Y0 - 12); X.fill();
+  judge(u, M.fast - 0.05, '快切!', CANDY.yellow, 1560, 260, 0.08);
+  judge(u, M.pause - 0.05, '停半拍!', CANDY.pink, 1560, 260, -0.06);
+  judge(u, M.paper - 0.05, '真声!', CANDY.sky, 1560, 260, 0.07);
+  judge(u, M.rhythm - 0.05, '跟上节奏!', CANDY.green, 1560, 260, -0.05);
+}
+
+async function brandShot(u) {
+  const t0 = M.brand - 0.1 + RCARD, span = M.done - 0.1 - t0;
+  const src = 24.2 + (u - t0) * (30.0 - 24.2) / span;
+  footage(await img(af(src)), seg(u, t0, span), 1.0);
+  credit('画面 · ' + BRAND + ' AI 广告');
+  [[M.gold, '金橙热光', CANDY.yellow, 420, 300], [M.spark, '少量火星', CANDY.orange, 420, 440], [M.freeze, '清晰定格', IVORY, 420, 580]].forEach(([tm, s, c, x, y], i) =>
+    { if (u >= tm - 0.05) sticker(x, y, s, 60, c, INK, popS(u, tm - 0.05), (i - 1) * 0.04); });
+  judge(u, M.freeze + 0.5, '完美!', CANDY.pink, 1250, 260, 0.08);
+}
+
+// hook and showcase
+async function hook(t) {
+  const H_ = [[0, 11.6], [0.3, 6.3], [0.6, 18.4], [0.95, 15.0]];
+  let k = 0; for (let j = 0; j < H_.length; j++) if (t >= H_[j][0]) k = j;
+  footage(await img(af(H_[k][1] + (t - H_[k][0]) * 0.6)), seg(t, H_[k][0], 0.4));
+  flash(t, H_[k][0], 0.05); gradients();
+  // giant line slammed in two chunks, keyword on honey
+  const s1 = 'AI 做的', s2 = '汉堡广告', px = 150, y = 560;
+  const w1 = tw(s1, px), w2 = tw(s2, px), x = (W - w1 - w2 - 30) / 2;
+  if (t >= 0.04) withT(x + w1 / 2, y, 1.3 - 0.3 * back(seg(t, 0.04, 0.13)), 0, () => { font(px); X.textAlign = 'center'; X.textBaseline = 'middle'; X.fillStyle = IVORY; X.shadowColor = 'rgba(0,0,0,0.6)'; X.shadowBlur = 24; X.fillText(s1, 0, 0); X.shadowBlur = 0; });
+  if (t >= 0.2) withT(x + w1 + 30 + w2 / 2, y, 1.3 - 0.3 * back(seg(t, 0.2, 0.13)), 0, () => {
+    const wp = eo(seg(t, 0.24, 0.12)); X.fillStyle = HONEY; X.fillRect(-w2 / 2 - 14, -px * 0.62, (w2 + 28) * wp, px * 1.22);
+    font(px); X.textAlign = 'center'; X.textBaseline = 'middle'; X.fillStyle = wp > 0.5 ? INK : IVORY; X.fillText(s2, 0, 0); });
+  sticker(960, 790, '3 步学会 →', 62, CANDY.pink, IVORY, popS(t, 0.55), -0.04);
+  bug(t, '构思 → 成片');
+  if (t > OFF - 0.12) { X.fillStyle = `rgba(255,255,255,${seg(t, OFF - 0.12, 0.12)})`; X.fillRect(0, 0, W, H); }
+  return [{ id: 'hook', text: 'AI 做的汉堡广告', x0: x, y0: y - 90, x1: x + w1 + w2 + 30, y1: y + 90 }];
+}
+async function showcase(t) {
+  const st = t - SHOW0;
+  if (st < 1.8) { roundCard(st, 0, 'BONUS', '成片展示', CANDY.blue, '#7F95FF'); flash(st, 0, 0.06);
+    return [{ id: 'show', text: '成片展示', x0: 600, y0: 300, x1: 1320, y1: 560 }]; }
+  const at = st - 1.8;
+  X.fillStyle = '#000'; X.fillRect(0, 0, W, H);
+  if (at < ADLEN) {
+    const fr = await img(af(at)); const h = Math.round(W * 630 / 1470), y = (H - h) / 2;
+    if (fr) { X.save(); X.globalAlpha = Math.min(seg(at, 0, 0.3), 1 - seg(at, ADLEN - 0.6, 0.6)); X.drawImage(fr, 0, y, W, h); X.restore(); }
+    if (at < 3.5) { X.save(); X.globalAlpha = 1 - seg(at, 2.8, 0.7); credit(BRAND + ' · AI 广告成片'); X.restore(); }
+  }
+  return [];
+}
+
+const IM = {};
+async function setup() {
+  TL = await (await fetch('timeline.json')).json();
+  M = TL.M; OFF = TL.OFF; TALK = TL.TALK; ADLEN = TL.AD; SHOW0 = OFF + TALK + 0.2; DUR = SHOW0 + 1.8 + ADLEN + 0.4;
+  window.DUR = +DUR.toFixed(3);
+  await document.fonts.load('900 88px "Noto Sans CJK SC"'); await document.fonts.load('400 40px "Lilita One"');
+  IM.sb = await img('assets/storyboard2x.png'); IM.hero = await img(af(11.6)); IM.cheese = await img(af(6.4)); IM.bite = await img(af(18.6));
+  for (let i = 0; i < 9; i++) IM['t' + i] = await img(`assets/thumb_${i}.png`);
+  const R = ROUNDS();
+  const ev = [];
+  [0, 0.3, 0.6, 0.95].forEach(t => ev.push({ t, type: 'hit' }));
+  ev.push({ t: OFF - 0.3, type: 'riser' });
+  for (const r of R) ev.push({ t: OFF + r[0], type: 'jingle' });
+  ev.push({ t: SHOW0, type: 'jingle' });
+  const pops = ['burger', 'beef', 'cheese', 'cilantro', 'imag', 'look', 'color', 'light', 'prefix', 'ref', 'gsb', 'chk', 'vid', 'gold', 'spark', 'freeze', 'whole'];
+  pops.forEach((k, i) => ev.push({ t: OFF + M[k] - 0.06, type: 'pop', pitch: i % 5 }));
+  ['zhi', 'tie', 'fast', 'pause', 'paper', 'rhythm'].forEach(k => ev.push({ t: OFF + M[k] - 0.05, type: 'judge' }));
+  ev.push({ t: OFF + M.freeze + 0.5, type: 'judge' });
+  ev.push({ t: OFF + M.lens - 0.05, type: 'shutter' });
+  for (let k = 0; k < 4; k++) ev.push({ t: OFF + M.each + k * 0.95, type: 'whoosh' });
+  [M.rou - 0.08, M.micro - 0.05, M.lens - 0.05, M.aud - 0.05].forEach(t => ev.push({ t: OFF + t, type: 'cut' }));
+  TL.caps.forEach(c => c.starts.forEach(s => ev.push({ t: OFF + s - 0.04, type: 'slam' })));
+  window.EV = ev.sort((a, b) => a.t - b.t);
+  window.TL = TL;
+  window.READY = true;
+}
+
+let LASTTEXTS = [];
+window.render = async t => {
+  X.setTransform(1, 0, 0, 1, 0, 0); X.filter = 'none'; X.globalAlpha = 1; X.globalCompositeOperation = 'source-over';
+  X.fillStyle = '#000'; X.fillRect(0, 0, W, H);
+  if (t < OFF) LASTTEXTS = await hook(t);
+  else if (t < OFF + TALK) LASTTEXTS = await talkScene(t, t - OFF);
+  else if (t < SHOW0) { LASTTEXTS = []; }
+  else LASTTEXTS = await showcase(t);
+};
+window.TEXTS = t => LASTTEXTS;
+setup();
+</script></body></html>
