@@ -27,10 +27,11 @@
 | `mask.py` | u2net 人像遮罩视频（帧间平滑） |
 | `prep_par.py` | 磨皮美颜 + 透明人物帧（WebP）+ 干净房间底板；可按帧区间多进程 |
 | `common.py` / `make_timeline.py` | 关键词时间、分块字幕 → `timeline.json`（画面与混音共用的唯一时间轴） |
+| `captions.example.json` | `make_timeline.py` 的输入示例：关键词标记 `marks` + 分块字幕 `caps` |
 
 ## 模板（templates/wangan-page/）
 
-lemo-opuscar 页面约定（`window.render(t)`、`window.EV`）下的网感口播成片模板：`index.html`（全部画面）、`mix.py`（120 BPM 原创配乐 + 程序音效 + 人声处理 + 闪避）、`build.sh`（渲染 → 混音 → −14 LUFS 母带）、`TREATMENT.md`（结构示例）。放到 lemo-opuscar 的 `films/<名字>/` 下使用。
+lemo-opuscar 页面约定（`window.render(t)`、`window.EV`）下的网感口播成片模板：`index.html`（一条已出片作品的完整画面代码，作参考：改 `ACCOUNT` / `BRAND`，并按自己的 `captions.json` 改 `M` 里的关键词名和各场景内容）、`mix.py`（120 BPM 原创配乐 + 程序音效 + 人声处理 + 闪避）、`build.sh`（渲染 → 混音 → −14 LUFS 母带，输出 `out/film.mp4`）、`TREATMENT.md`（结构模板）。放到 lemo-opuscar 的 `films/<名字>/` 下使用。
 
 ## 依赖与来源
 
