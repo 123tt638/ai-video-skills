@@ -1,0 +1,9 @@
+*.mp4
+*.mov
+*.wav
+*.onnx
+person/
+ad/
+out/
+work/
+__pycache__/
